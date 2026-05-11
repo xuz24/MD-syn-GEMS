@@ -1,0 +1,6 @@
+data/
+*.csv
+*.pt
+*.pth
+*.ckpt
+*.npy
