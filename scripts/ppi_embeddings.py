@@ -5,7 +5,7 @@ import networkx as nx
 from node2vec import Node2Vec
 
 ppi_path = "/Users/zijiexu/GEMS-LAB/jumpstart_bundle 2/data/protein_features/string_ppi_entrez.csv"
-landmarks_path = "/Users/zijiexu/GEMS-LAB/MD-syn-GEMS/landmark_genes.txt"
+landmarks_path = "/Users/zijiexu/GEMS-LAB/MD-syn-GEMS/data/landmark_genes.txt"
 
 ppi_df = pd.read_csv(ppi_path)
 landmarks_df = pd.read_csv(landmarks_path, sep="\t")

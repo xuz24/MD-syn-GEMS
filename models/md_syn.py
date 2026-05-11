@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from one_d_fem import One_D_FEM 
-from two_d_fem import Two_D_FEM
-from ddi_predictor import DDI_Predictor
+from .one_d_fem import One_D_FEM 
+from .two_d_fem import Two_D_FEM
+from .ddi_predictor import DDI_Predictor
 
 class MD_Syn(nn.Module):
     def __init__(self, 

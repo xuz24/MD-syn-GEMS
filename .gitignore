@@ -4,3 +4,4 @@ data/
 *.pth
 *.ckpt
 *.npy
+__pycache__/
