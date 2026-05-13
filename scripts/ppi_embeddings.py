@@ -4,8 +4,11 @@ import pandas as pd
 import networkx as nx
 from node2vec import Node2Vec
 
-ppi_path = "/Users/zijiexu/GEMS-LAB/jumpstart_bundle 2/data/protein_features/string_ppi_entrez.csv"
-landmarks_path = "/Users/zijiexu/GEMS-LAB/MD-syn-GEMS/data/landmark_genes.txt"
+ppi_path = "/home/xuzijie/MD-syn-GEMS/data/string_ppi_entrez.csv"
+landmarks_path = "/home/xuzijie/MD-syn-GEMS/data/landmark_genes.txt"
+
+print(f'=== PPI FILE: {ppi_path} ===')
+print(f'=== LANDMARKS FILE: {landmarks_path} ===')
 
 ppi_df = pd.read_csv(ppi_path)
 landmarks_df = pd.read_csv(landmarks_path, sep="\t")
@@ -16,6 +19,8 @@ ppi_filtered = ppi_df[
     ppi_df["entrez_id_a"].isin(landmark_ids) &
     ppi_df["entrez_id_b"].isin(landmark_ids)
 ]
+
+print('=== START PROCESSING ===')
 
 G = nx.from_pandas_edgelist(ppi_filtered, source="entrez_id_a", target="entrez_id_b",
 edge_attr="score")

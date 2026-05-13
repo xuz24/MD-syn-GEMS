@@ -5,3 +5,6 @@ data/
 *.ckpt
 *.npy
 __pycache__/
+slurm/
+.venv/
+logs/
