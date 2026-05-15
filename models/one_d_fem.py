@@ -40,21 +40,21 @@ class One_D_FEM(nn.Module):
 
         raw = torch.load(molformer_embeddings_path)
         # if it's a dict-like mapping, normalize keys
-        try:
-            self.molformer_embeddings = { _normalize(k): v for k, v in raw.items() }
-        except Exception:
-            # fallback: keep as-is
-            self.molformer_embeddings = raw
-        self.cell_line_encoder = CellLineEncoder()
-        self.cell_line_mapping = pd.read_csv(cell_line_mapping_path)
-        self.cell_line_mapping = self.cell_line_mapping.dropna(subset=["drugcomb_name", "ccle_modelid"])
-        self.cell_line_to_depmap = {
-            normalize_cell_line(k): v
-            for k, v in zip(
-                self.cell_line_mapping["drugcomb_name"],
-                self.cell_line_mapping["ccle_modelid"]
-            )
-        }
+        # try:
+        self.molformer_embeddings = { _normalize(k): v for k, v in raw.items() }
+        # except Exception:
+        #     # fallback: keep as-is
+        #     self.molformer_embeddings = raw
+        # self.cell_line_encoder = CellLineEncoder()
+        # self.cell_line_mapping = pd.read_csv(cell_line_mapping_path)
+        # self.cell_line_mapping = self.cell_line_mapping.dropna(subset=["drugcomb_name", "ccle_modelid"])
+        # self.cell_line_to_depmap = {
+        #     normalize_cell_line(k): v
+        #     for k, v in zip(
+        #         self.cell_line_mapping["drugcomb_name"],
+        #         self.cell_line_mapping["ccle_modelid"]
+        #     )
+        # }
         self._warned_missing_cell_lines = set()
         self._warned_missing_depmap_ids = set()
 
@@ -106,6 +106,7 @@ class One_D_FEM(nn.Module):
 
         cell_key = normalize_cell_line(cell_line)
         depmap_id = self.cell_line_to_depmap.get(cell_key)
+        
         if depmap_id is None:
             if cell_key not in self._warned_missing_cell_lines:
                 logging.warning(f"Cell line mapping not found for: {cell_line} (normalized: {cell_key}) - using zero cell-line features")

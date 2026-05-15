@@ -207,6 +207,7 @@ class Two_D_FEM(nn.Module):
     def forward(self, drug_1, drug_2):
         drug_1_smiles = self.drug_smiles.get(normalize_drug_name(drug_1))
         drug_2_smiles = self.drug_smiles.get(normalize_drug_name(drug_2))
+        
         if drug_1_smiles is None or drug_2_smiles is None:
             raise KeyError(f"SMILES not found for: {drug_1} or {drug_2}")
 
