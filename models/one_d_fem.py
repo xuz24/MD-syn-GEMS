@@ -50,7 +50,7 @@ class One_D_FEM(nn.Module):
         self.cell_line_mapping = self.cell_line_mapping.dropna(subset=["drugcomb_name", "ccle_modelid"])
         
         if use_drugcomb:
-            self.cell_line_to_depmap = None
+            self.cell_line_to_depmap = self.cell_line_mapping.set_index('drugcomb_name')
         else:
             self.cell_line_to_depmap = {
                 normalize_cell_line(k): v
@@ -112,7 +112,7 @@ class One_D_FEM(nn.Module):
         drug_2_embedding = self.get_molformer_embedding(drug_2)
 
         cell_key = cell_line if self.use_drugcomb else normalize_cell_line(cell_line)
-        depmap_id = self.cell_line_mapping['ccle_modelid'].get(cell_key) if self.use_drugcomb else self.cell_line_to_depmap.get(cell_key)
+        depmap_id = self.cell_line_to_depmap['ccle_modelid'].get(cell_key) if self.use_drugcomb else self.cell_line_to_depmap.get(cell_key)
         
         if depmap_id is None:
             if cell_key not in self._warned_missing_cell_lines:
