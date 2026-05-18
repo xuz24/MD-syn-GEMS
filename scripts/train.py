@@ -30,6 +30,7 @@ warnings.filterwarnings(
 
 from models import MD_Syn
 from models import ONeilDataset, collate_fn
+from models.loaders import DrugCombDataset
 from torch.utils.data import DataLoader, Subset
 
 # Configure logging to stdout
@@ -82,6 +83,24 @@ def log_class_balance(prefix, scores):
         logging.info(f"{prefix} class balance: no samples")
         return
 
+    pct_0 = 100.0 * class_0 / total
+    pct_1 = 100.0 * class_1 / total
+    logging.info(
+        f"{prefix} class balance: class 0={class_0} ({pct_0:.1f}%), class 1={class_1} ({pct_1:.1f}%), total={total}"
+    )
+
+
+def log_binary_class_balance(prefix, labels):
+    """Log binary class balance for datasets with 0/1 labels."""
+    labels = np.asarray(labels, dtype=int)
+    class_0 = int(np.sum(labels == 0))
+    class_1 = int(np.sum(labels == 1))
+    total = class_0 + class_1
+    
+    if total == 0:
+        logging.info(f"{prefix} class balance: no samples")
+        return
+    
     pct_0 = 100.0 * class_0 / total
     pct_1 = 100.0 * class_1 / total
     logging.info(
@@ -287,6 +306,7 @@ def run_cross_validation(args):
             args.drug_targets_path,
             args.drug_dbid_mapping_path,
             args.drug_smiles_path,
+            use_drugcomb=False
         ).to(device)
 
         criterion = nn.CrossEntropyLoss()
@@ -306,8 +326,83 @@ def run_cross_validation(args):
         torch.save(model.state_dict(), f"model_fold{fold}.pt")
 
 
+def run_cross_validation_drugcomb(args):
+    """Run n-fold cross-validation using DrugComb dataset with pre-assigned folds."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    logging.info(f"Using device: {device}")
+
+    # Load full dataset to get unique fold information
+    full_dataset = DrugCombDataset(args.labels_path)
+    logging.info(f"Loaded full DrugComb dataset with {len(full_dataset)} total samples")
+    log_binary_class_balance("Overall dataset", full_dataset.labels_df['label'])
+    
+    unique_folds = sorted(full_dataset.labels_df['fold'].unique())
+    n_folds = len(unique_folds)
+    logging.info(f"Found {n_folds} folds in dataset: {unique_folds}")
+
+    for fold_idx, val_fold in enumerate(unique_folds, 1):
+        logging.info(f"=== Fold {fold_idx}/{n_folds} (validation fold={val_fold}) ===")
+        
+        # Create train and validation subsets
+        train_folds = [f for f in unique_folds if f != val_fold]
+        
+        train_dataset = DrugCombDataset(args.labels_path, folds=train_folds)
+        val_dataset = DrugCombDataset(args.labels_path, folds=[val_fold])
+        
+        logging.info(f"  Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
+        log_binary_class_balance(f"Fold {fold_idx} train", train_dataset.labels_df['label'])
+        log_binary_class_balance(f"Fold {fold_idx} val", val_dataset.labels_df['label'])
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            collate_fn=collate_fn,
+            worker_init_fn=seed_worker,
+            generator=make_generator(args.seed + fold_idx)
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            worker_init_fn=seed_worker,
+            generator=make_generator(args.seed + fold_idx)
+        )
+
+        model = MD_Syn(
+            args.cell_line_embeddings_path,
+            args.cell_line_mapping_path,
+            args.landmarks_path,
+            args.molformer_embeddings_path,
+            args.ppi_graph_path,
+            args.drug_targets_path,
+            args.drug_dbid_mapping_path,
+            args.drug_smiles_path,
+            use_drugcomb=True
+        ).to(device)
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+
+        for epoch in range(args.num_epochs):
+            logging.info(f"Fold {fold_idx} - Epoch {epoch+1}/{args.num_epochs}")
+            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            
+            val_loss, val_labels, val_preds, val_probs, val_samples = evaluate(model, val_loader, criterion, device)
+            val_metrics = compute_metrics(val_labels, val_preds, val_probs)
+            
+            logging.info(f"Fold {fold_idx} Epoch {epoch+1}/{args.num_epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+            log_metrics(f"  Fold {fold_idx} Val", val_metrics)
+
+        logging.info(f"Fold {fold_idx} training complete. Saving model to model_drugcomb_fold{val_fold}.pt")
+        torch.save(model.state_dict(), f"model_drugcomb_fold{val_fold}.pt")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', type=str, default='oneil', choices=['oneil', 'drugcomb'],
+                        help='Dataset to use: oneil or drugcomb')
     parser.add_argument('--labels_path', type=str, required=False,
                         default="/home/xuzijie/MD-syn-GEMS/data/labels.csv")
     parser.add_argument('--cell_line_embeddings_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/CCLE_expression.csv")
@@ -322,7 +417,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning_rate', type=float, default=5e-4)
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--cv', action='store_true', help='Run 5-fold cross-validation')
+    parser.add_argument('--cv', action='store_true', help='Run cross-validation (5-fold for oneil, folds in dataset for drugcomb)')
 
     args = parser.parse_args()
     # pass some args through
@@ -341,6 +436,7 @@ if __name__ == "__main__":
 
     seed_everything(args.seed)
     
+    logging.info(f'DATASET: {args.dataset}')
     logging.info(f'CELL LINE EMBEDDING FILE: {args.cell_line_embeddings_path}')
     logging.info(f'CELL LINE MAPPING FILE: {args.cell_line_mapping_path}')
     logging.info(f'LANDMARKS FILE: {args.landmarks_path}')
@@ -357,15 +453,28 @@ if __name__ == "__main__":
 
     if args.cv:
         logging.info('=== USING CROSS VALIDATION ===')
-        run_cross_validation(args)
+        if args.dataset == 'drugcomb':
+            run_cross_validation_drugcomb(args)
+        else:
+            run_cross_validation(args)
     else:
         logging.info('=== SINGLE RUN ===')
         logging.info(f"Using device: {torch.device('cuda' if torch.cuda.is_available() else 'cpu')}")
         # Single-run training using entire dataset
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        dataset = ONeilDataset(args.labels_path)
+        
+        if args.dataset == 'drugcomb':
+            dataset = DrugCombDataset(args.labels_path)
+            log_fn = log_binary_class_balance
+            use_drugcomb = True
+        else:
+            dataset = ONeilDataset(args.labels_path)
+            log_fn = log_class_balance
+            use_drugcomb = False
+            
         logging.info(f"Loaded dataset with {len(dataset)} samples")
-        log_class_balance("Overall dataset", dataset.labels_df['synergy'])
+        log_fn("Overall dataset", dataset.labels_df['label'] if args.dataset == 'drugcomb' else dataset.labels_df['synergy'])
+        
         loader = DataLoader(
             dataset,
             batch_size=args.batch_size,
@@ -384,6 +493,7 @@ if __name__ == "__main__":
             args.drug_targets_path,
             args.drug_dbid_mapping_path,
             args.drug_smiles_path,
+            use_drugcomb=use_drugcomb
         ).to(device)
 
         criterion = nn.CrossEntropyLoss()
