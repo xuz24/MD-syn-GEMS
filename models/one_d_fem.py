@@ -29,8 +29,9 @@ class CellLineEncoder(nn.Module):
         return self.net(x)
 
 class One_D_FEM(nn.Module):
-    def __init__(self, cell_line_embeddings_path, cell_line_mapping_path, landmarks_path, molformer_embeddings_path):
+    def __init__(self, cell_line_embeddings_path, cell_line_mapping_path, landmarks_path, molformer_embeddings_path, use_drugcomb):
         super().__init__()
+        self.use_drugcomb = use_drugcomb
         self.cell_line_embeddings = pd.read_csv(cell_line_embeddings_path)
         self.landmarks = pd.read_csv(landmarks_path, sep="\t")
         self.init_cell_embeddings()
@@ -38,23 +39,27 @@ class One_D_FEM(nn.Module):
         def _normalize(name: str) -> str:
             return str(name).strip().lower()
 
-        raw = torch.load(molformer_embeddings_path)
-        # if it's a dict-like mapping, normalize keys
-        # try:
-        self.molformer_embeddings = { _normalize(k): v for k, v in raw.items() }
-        # except Exception:
-        #     # fallback: keep as-is
-        #     self.molformer_embeddings = raw
-        # self.cell_line_encoder = CellLineEncoder()
-        # self.cell_line_mapping = pd.read_csv(cell_line_mapping_path)
-        # self.cell_line_mapping = self.cell_line_mapping.dropna(subset=["drugcomb_name", "ccle_modelid"])
-        # self.cell_line_to_depmap = {
-        #     normalize_cell_line(k): v
-        #     for k, v in zip(
-        #         self.cell_line_mapping["drugcomb_name"],
-        #         self.cell_line_mapping["ccle_modelid"]
-        #     )
-        # }
+        if use_drugcomb:
+            self.molformer_embeddings = torch.load(molformer_embeddings_path)
+        else:
+            raw = torch.load(molformer_embeddings_path)
+            self.molformer_embeddings = { _normalize(k): v for k, v in raw.items() }
+            
+        self.cell_line_encoder = CellLineEncoder()
+        self.cell_line_mapping = pd.read_csv(cell_line_mapping_path)
+        self.cell_line_mapping = self.cell_line_mapping.dropna(subset=["drugcomb_name", "ccle_modelid"])
+        
+        if use_drugcomb:
+            self.cell_line_to_depmap = None
+        else:
+            self.cell_line_to_depmap = {
+                normalize_cell_line(k): v
+                for k, v in zip(
+                    self.cell_line_mapping["drugcomb_name"],
+                    self.cell_line_mapping["ccle_modelid"]
+                )
+            }
+            
         self._warned_missing_cell_lines = set()
         self._warned_missing_depmap_ids = set()
 
@@ -88,8 +93,10 @@ class One_D_FEM(nn.Module):
         def _normalize(name: str) -> str:
             return str(name).strip().lower()
 
-        key = _normalize(drug)
-        emb = self.molformer_embeddings[key]
+        key = _normalize(drug) if not self.use_drugcomb else drug
+        emb = self.molformer_embeddings.get(key)
+        if emb is None:
+            return torch.zeros((1, 768), dtype=torch.float32)
         if isinstance(emb, torch.Tensor):
             if emb.dim() == 1:
                 emb = emb.unsqueeze(0)
@@ -104,8 +111,8 @@ class One_D_FEM(nn.Module):
         drug_1_embedding = self.get_molformer_embedding(drug_1)
         drug_2_embedding = self.get_molformer_embedding(drug_2)
 
-        cell_key = normalize_cell_line(cell_line)
-        depmap_id = self.cell_line_to_depmap.get(cell_key)
+        cell_key = cell_line if self.use_drugcomb else normalize_cell_line(cell_line)
+        depmap_id = self.cell_line_mapping['ccle_modelid'].get(cell_key) if self.use_drugcomb else self.cell_line_to_depmap.get(cell_key)
         
         if depmap_id is None:
             if cell_key not in self._warned_missing_cell_lines:

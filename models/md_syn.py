@@ -7,11 +7,11 @@ from .ddi_predictor import DDI_Predictor
 class MD_Syn(nn.Module):
     def __init__(self, 
                  cell_line_embeddings_path, cell_line_mapping_path, landmarks_path, molformer_embeddings_path, 
-                 ppi_graph_path, drug_targets_path, drug_dbid_mapping_path, drug_smiles_path
+                 ppi_graph_path, drug_targets_path, drug_dbid_mapping_path, drug_smiles_path, use_drugcomb
                  ):
         super().__init__()
-        self.one_d_fem = One_D_FEM(cell_line_embeddings_path, cell_line_mapping_path, landmarks_path, molformer_embeddings_path)
-        self.two_d_fem = Two_D_FEM(ppi_graph_path, drug_targets_path, drug_dbid_mapping_path, drug_smiles_path)
+        self.one_d_fem = One_D_FEM(cell_line_embeddings_path, cell_line_mapping_path, landmarks_path, molformer_embeddings_path, use_drugcomb)
+        self.two_d_fem = Two_D_FEM(ppi_graph_path, drug_targets_path, drug_dbid_mapping_path, drug_smiles_path, use_drugcomb)
         self.ddi_predictor = DDI_Predictor()
         
     def forward(self, drug_1, drug_2, cell_line):

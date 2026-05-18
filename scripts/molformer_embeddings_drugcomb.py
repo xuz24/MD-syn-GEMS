@@ -45,7 +45,7 @@ if __name__ == "__main__":
 
     embeddings_dict = {}
 
-    dbid_file = ""
+    dbid_file = "/home/xuzijie/MD-syn-GEMS/data/canonical_folds.csv"
     smiles_file = "/home/xuzijie/MD-syn-GEMS/data/molecules.csv"
 
     
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         return str(name).strip().lower()
 
     fold_splits = pd.read_csv(dbid_file)
-    smiles = pd.read_csv(smiles_file)
+    smiles = pd.read_csv(smiles_file).set_index('drugbank_id')['smiles'].dropna()
     
     
     dbids = dbids = (
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     
     for id in dbids:
         smilesString = smiles.get(id)
-        if smilesString is None or pd.isna(smiles):
+        if smilesString is None or pd.isna(smilesString):
             missing += 1
             print(f'{id} missing')
         else:

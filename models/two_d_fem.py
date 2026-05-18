@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import networkx as nx
+from collections import defaultdict
 from node2vec import Node2Vec
 from rdkit import Chem
 from torch_geometric.data import Data
@@ -139,41 +140,86 @@ class GraphTransPooling(nn.Module):
         
 
 class Two_D_FEM(nn.Module):
-    def __init__(self, ppi_graph_path, drug_targets_path, drug_dbid_mapping_path, drug_smiles_path):
+    def __init__(self, ppi_graph_path, drug_targets_path, drug_dbid_mapping_path, drug_smiles_path, use_drugcomb):
         super().__init__()
+        self.use_drugcomb = use_drugcomb
         self.ppi = torch.load(ppi_graph_path)
-        self.drug_targets = (
-            pd.read_csv(drug_targets_path)
-            .groupby("DrugID (DrugBank ID)")["Drug_Target (Gene Eentrez IDs)"]
-            .apply(list)
-            .to_dict()
-        )
-        # load drug smiles and create mapping: normalized name -> smiles
-        df_smiles = pd.read_csv(drug_smiles_path)
-        smiles_cols = [c for c in df_smiles.columns if str(c).strip().lower() == 'smiles']
-        if smiles_cols:
-            name_cols = [c for c in df_smiles.columns if c not in smiles_cols]
-            name_col = name_cols[0]
-            smiles_col = smiles_cols[0]
-            raw_smiles = df_smiles[[name_col, smiles_col]].dropna().set_index(name_col)[smiles_col].to_dict()
-        else:
-            # Handle headerless files like "drug,smiles" with first row treated as header.
-            df_smiles = pd.read_csv(drug_smiles_path, header=None, names=['drug_name', 'smiles'])
-            raw_smiles = df_smiles[['drug_name', 'smiles']].dropna().set_index('drug_name')['smiles'].to_dict()
-        self.drug_smiles = { normalize_drug_name(k): str(v).strip() for k, v in raw_smiles.items() }
-
-        # load drug name->dbid mapping and normalize keys
-        mapping_df = pd.read_csv(drug_dbid_mapping_path)
-        mapping_df = mapping_df.dropna(subset=['drugbank_id'])  # Remove rows with NaN drugbank_id
-        raw_map = mapping_df.set_index('name_norm')['drugbank_id'].to_dict()
-        self.drug_mapping = { normalize_drug_name(k): v for k, v in raw_map.items() }
+        
+        if use_drugcomb: 
+            # provide 3 paths
+            # path[0] = drug_targets.csv, 
+            # path[1] = drugbank/targets.csv, 
+            # path[2] = uniprot_entrez_mapping.csv
+        
+            drug_targets_1 = pd.read_csv(drug_targets_path[0])
+            drug_targets_2 = pd.read_csv(drug_targets_path[1])
+            
+            uniprot_to_entrez = pd.read_csv(drug_targets_path[2])
+            
+            targets_dict_1 = (
+                drug_targets_1
+                .groupby("DrugID (DrugBank ID)")["Drug_Target (Gene Eentrez IDs)"]
+                .apply(list)
+                .to_dict()
+            )
+            
+            drug_targets_2 = drug_targets_2.merge(
+                uniprot_to_entrez,
+                left_on='target_uniprot',
+                right_on='uniprot_id',
+                how='left'
+            )
+            
+            targets_dict_2 = (
+                drug_targets_2[drug_targets_2['entrez_id'].notna()]
+                .groupby("drugbank_id")["entrez_id"]
+                .apply(list)
+                .to_dict()
+            )
+            
+            self.drug_targets = defaultdict(list)
+            for d in (targets_dict_1, targets_dict_2):
+                for k, v in d.items():
+                    self.drug_targets[k].extend(v)
+                    
+            self.drug_smiles = pd.read_csv(drug_smiles_path).set_index('drugbank_id')['smiles'].dropna()
+            
+        else: 
+            self.drug_targets = (
+                pd.read_csv(drug_targets_path)
+                .groupby("DrugID (DrugBank ID)")["Drug_Target (Gene Eentrez IDs)"]
+                .apply(list)
+                .to_dict()
+            )
+            # load drug smiles and create mapping: normalized name -> smiles
+            df_smiles = pd.read_csv(drug_smiles_path)
+            smiles_cols = [c for c in df_smiles.columns if str(c).strip().lower() == 'smiles']
+            if smiles_cols:
+                name_cols = [c for c in df_smiles.columns if c not in smiles_cols]
+                name_col = name_cols[0]
+                smiles_col = smiles_cols[0]
+                raw_smiles = df_smiles[[name_col, smiles_col]].dropna().set_index(name_col)[smiles_col].to_dict()
+            else:
+                # Handle headerless files like "drug,smiles" with first row treated as header.
+                df_smiles = pd.read_csv(drug_smiles_path, header=None, names=['drug_name', 'smiles'])
+                raw_smiles = df_smiles[['drug_name', 'smiles']].dropna().set_index('drug_name')['smiles'].to_dict()
+            self.drug_smiles = { normalize_drug_name(k): str(v).strip() for k, v in raw_smiles.items() }
+        
+        if not use_drugcomb: # only need for oneil
+            # load drug name->dbid mapping and normalize keys
+            mapping_df = pd.read_csv(drug_dbid_mapping_path)
+            mapping_df = mapping_df.dropna(subset=['drugbank_id'])  # Remove rows with NaN drugbank_id
+            raw_map = mapping_df.set_index('name_norm')['drugbank_id'].to_dict()
+            self.drug_mapping = { normalize_drug_name(k): v for k, v in raw_map.items() }
+        
         self.gcn = MolecularGCN()
         self.graph_trans_pooling = GraphTransPooling()
         self._warned_missing_dbids = set()
         
     def get_ppi_features(self, drug_name): 
-        dbid = self.drug_mapping.get(normalize_drug_name(drug_name))
-        if dbid is None:
+        dbid = self.drug_mapping.get(normalize_drug_name(drug_name)) if not self.use_drugcomb else drug_name
+        
+        if dbid is None and (not self.use_drugcomb):
             if drug_name not in self._warned_missing_dbids:
                 logging.warning(f"Drug->dbid mapping not found for: {drug_name} - returning empty PPI features")
                 self._warned_missing_dbids.add(drug_name)
@@ -205,17 +251,27 @@ class Two_D_FEM(nn.Module):
         return self.ppi["embeddings"][indices]
     
     def forward(self, drug_1, drug_2):
-        drug_1_smiles = self.drug_smiles.get(normalize_drug_name(drug_1))
-        drug_2_smiles = self.drug_smiles.get(normalize_drug_name(drug_2))
-        
-        if drug_1_smiles is None or drug_2_smiles is None:
-            raise KeyError(f"SMILES not found for: {drug_1} or {drug_2}")
+        if not self.use_drugcomb:
+            drug_1_smiles = self.drug_smiles.get(normalize_drug_name(drug_1))
+            drug_2_smiles = self.drug_smiles.get(normalize_drug_name(drug_2))   
+        else:
+            drug_1_smiles = self.drug_smiles.get(drug_1)
+            drug_2_smiles = self.drug_smiles.get(drug_2)
+            
+        if drug_1_smiles is None:
+            logging.warning(f"{drug_1} has no SMILES")
+            drug_1_G_embedding = torch.zeros((1, 128), dtype=torch.float32)
+        else:
+            drug_1_G = smiles_to_graph(drug_1_smiles)
+            drug_1_G_embedding = self.gcn(drug_1_G)  # (1, embed_dim)
 
-        drug_1_G = smiles_to_graph(drug_1_smiles)
-        drug_2_G = smiles_to_graph(drug_2_smiles)
-
-        drug_1_G_embedding = self.gcn(drug_1_G)  # (1, embed_dim)
-        drug_2_G_embedding = self.gcn(drug_2_G)
+        if drug_2_smiles is None:
+            logging.warning(f"{drug_2} has no SMILES")
+            drug_2_G_embedding = torch.zeros((1, 128), dtype=torch.float32)
+        else:
+            drug_2_G = smiles_to_graph(drug_2_smiles)
+            drug_2_G_embedding = self.gcn(drug_2_G)  # (1, embed_dim)
+            
 
         drug_1_ppi = self.get_ppi_features(drug_1)
         drug_2_ppi = self.get_ppi_features(drug_2)
@@ -225,8 +281,8 @@ class Two_D_FEM(nn.Module):
 
         # Ensure embeddings have batch and token dims
         # GCN outputs shape: (batch_size, embed_dim) -> make (batch, 1, embed_dim)
-        drug_1_G_embedding = drug_1_G_embedding.unsqueeze(1)
-        drug_2_G_embedding = drug_2_G_embedding.unsqueeze(1)
+        drug_1_G_embedding = drug_1_G_embedding.unsqueeze(1).to(device)
+        drug_2_G_embedding = drug_2_G_embedding.unsqueeze(1).to(device)
 
         # PPI features: (num_targets, embed_dim) -> (1, num_targets, embed_dim)
         if drug_1_ppi.numel() == 0:

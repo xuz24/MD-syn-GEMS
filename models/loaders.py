@@ -69,13 +69,19 @@ def collate_fn(batch):
     drug_2_list = [item['drug_2'] for item in batch]
     cell_line_list = [item['cell_line'] for item in batch]
     labels = torch.stack([item['label'] for item in batch])
-    
-    return {
+    folds = [item['fold'] for item in batch] if 'fold' in batch[0] else None
+
+    collated = {
         'drug_1': drug_1_list,
         'drug_2': drug_2_list,
         'cell_line': cell_line_list,
         'label': labels
     }
+
+    if folds is not None:
+        collated['fold'] = torch.tensor(folds, dtype=torch.long)
+
+    return collated
 
 
 def get_dataloader(labels_path, batch_size=32, shuffle=True, num_workers=0):
@@ -99,3 +105,42 @@ def get_dataloader(labels_path, batch_size=32, shuffle=True, num_workers=0):
         num_workers=num_workers,
         collate_fn=collate_fn
     )
+
+class DrugCombDataset(Dataset):
+    """
+    DrugComb fold-assigned dataset loader.
+
+    The canonical CSV uses binary labels (0/1) and a fold column with values 0, 1, 2.
+    Optionally filter to a subset of folds by passing `folds`.
+    """
+
+    def __init__(self, labels_path, folds=None):
+        self.labels_df = pd.read_csv(labels_path)
+        self.labels_df = self.labels_df.dropna(subset=['drug1_dbid', 'drug2_dbid', 'cell_name', 'label', 'fold']).copy()
+
+        self.labels_df['label'] = self.labels_df['label'].astype(int)
+        self.labels_df['fold'] = self.labels_df['fold'].astype(int)
+
+        if folds is not None:
+            if isinstance(folds, int):
+                folds = [folds]
+            self.labels_df = self.labels_df[self.labels_df['fold'].isin(folds)].copy()
+
+    def __len__(self):
+        return len(self.labels_df)
+
+    def __getitem__(self, idx):
+        row = self.labels_df.iloc[idx]
+        drug_1 = str(row['drug1_dbid']).strip()
+        drug_2 = str(row['drug2_dbid']).strip()
+        cell_line = str(row['cell_name']).strip()
+        label = int(row['label'])
+        fold = int(row['fold'])
+
+        return {
+            'drug_1': drug_1,
+            'drug_2': drug_2,
+            'cell_line': cell_line,
+            'label': torch.tensor(label, dtype=torch.long),
+            'fold': fold,
+        }
