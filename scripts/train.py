@@ -11,36 +11,52 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import logging
 import sys
 
-warnings.filterwarnings(
-    "ignore",
-    message=r"An issue occurred while importing 'pyg-lib'.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r"An issue occurred while importing 'torch-sparse'.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r"Deterministic behavior was enabled with either `torch.use_deterministic_algorithms\(True\)`.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r"Memory Efficient attention defaults to a non-deterministic algorithm.*",
-)
 
 from models import MD_Syn
 from models import ONeilDataset, collate_fn
 from models.loaders import DrugCombDataset
 from torch.utils.data import DataLoader, Subset
 
-# Configure logging to stdout
+class DeduplicateFilter(logging.Filter):
+    """Allow a log record only the first time its message is seen."""
+    def __init__(self):
+        super().__init__()
+        self._seen = set()
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if msg in self._seen:
+            return False
+        self._seen.add(msg)
+        return True
+
+
+class MaxLevelFilter(logging.Filter):
+    """Allow only records strictly below a given level."""
+    def __init__(self, max_level):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record):
+        return record.levelno < self.max_level
+
+
+# Configure root logger: INFO (and below) -> stdout; WARNING+ -> stderr (deduplicated)
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.addFilter(MaxLevelFilter(logging.WARNING))
+stdout_handler.setFormatter(formatter)
+logger.addHandler(stdout_handler)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.WARNING)
+stderr_handler.addFilter(DeduplicateFilter())
+stderr_handler.setFormatter(formatter)
+logger.addHandler(stderr_handler)
 
 
 def seed_everything(seed: int):
@@ -410,7 +426,11 @@ if __name__ == "__main__":
     parser.add_argument('--landmarks_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/landmark_genes.txt")
     parser.add_argument('--molformer_embeddings_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/molformer_embeddings.pt")
     parser.add_argument('--ppi_graph_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/ppi_node2vec_matrix.pt")
-    parser.add_argument('--drug_targets_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/drug_target.csv")
+    parser.add_argument('--drug_targets_path', nargs='+', type=str,
+                        default=["/home/xuzijie/MD-syn-GEMS/data/drug_target.csv",
+                                 "/home/xuzijie/MD-syn-GEMS/data/targets.csv",
+                                 "/home/xuzijie/MD-syn-GEMS/data/uniprot_to_entrez.csv"],
+                        help='One or more paths to drug target files (for DrugComb provide 3 paths)')
     parser.add_argument('--drug_dbid_mapping_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/drugcomb_name_to_dbid_mapping_improved.csv")
     parser.add_argument('--drug_smiles_path', type=str, default="/home/xuzijie/MD-syn-GEMS/data/smiles.csv")
     parser.add_argument('--batch_size', type=int, default=32)

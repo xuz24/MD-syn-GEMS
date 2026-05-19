@@ -215,6 +215,7 @@ class Two_D_FEM(nn.Module):
         self.gcn = MolecularGCN()
         self.graph_trans_pooling = GraphTransPooling()
         self._warned_missing_dbids = set()
+        self._warned_missing_smiles = set()
         
     def get_ppi_features(self, drug_name): 
         dbid = self.drug_mapping.get(normalize_drug_name(drug_name)) if not self.use_drugcomb else drug_name
@@ -259,14 +260,18 @@ class Two_D_FEM(nn.Module):
             drug_2_smiles = self.drug_smiles.get(drug_2)
             
         if drug_1_smiles is None:
-            logging.warning(f"{drug_1} has no SMILES")
+            if drug_1 not in self._warned_missing_smiles:
+                logging.warning(f"{drug_1} has no SMILES")
+                self._warned_missing_smiles.add(drug_1)
             drug_1_G_embedding = torch.zeros((1, 128), dtype=torch.float32)
         else:
             drug_1_G = smiles_to_graph(drug_1_smiles)
             drug_1_G_embedding = self.gcn(drug_1_G)  # (1, embed_dim)
 
         if drug_2_smiles is None:
-            logging.warning(f"{drug_2} has no SMILES")
+            if drug_2 not in self._warned_missing_smiles:
+                logging.warning(f"{drug_2} has no SMILES")
+                self._warned_missing_smiles.add(drug_2)
             drug_2_G_embedding = torch.zeros((1, 128), dtype=torch.float32)
         else:
             drug_2_G = smiles_to_graph(drug_2_smiles)
