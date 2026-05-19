@@ -1,1 +1,1 @@
-# MD-syn-GEMS
+# MD-syn
